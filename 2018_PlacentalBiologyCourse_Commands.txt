@@ -1,0 +1,49 @@
+
+#------------------------------------------------------------------------------
+# Placental Biology Course 2018
+# Russell S. Hamilton (rsh46@cam.ac.uk)
+# Xiaohui Zhao (xz289@cam.ac.uk)
+# Malwina Prater (mn367@cam.ac.uk)
+# License: 	Attribution-Non Commercial-Share Alike CC BY-NC-SA 
+# ( https://creativecommons.org/licenses/by-nc-sa/ )
+#------------------------------------------------------------------------------
+
+
+#------------------------------------------------------------------------------
+# FASTQC                                                                      #
+#------------------------------------------------------------------------------
+
+fastqc SRR1823638_sub_1.fastq.gz SRR1823638_sub_2.fastq.gz 
+	
+
+firefox SRR1823638_sub_1_fastqc.html
+
+
+
+#------------------------------------------------------------------------------
+# TRIM_GALORE                                                                 #
+#------------------------------------------------------------------------------
+
+
+trim_galore --paired --gzip -q 20 SRR1823638_sub_1.fastq.gz SRR1823638_sub_2.fastq.gz
+
+
+#------------------------------------------------------------------------------
+# KALLISTO                                                                    #
+#------------------------------------------------------------------------------
+
+kallisto quant -b 25 -i Mus_musculus.GRCm38.cdna.all.idx -o kallisto_output SRR1823638_sub_1_val_1.fq.gz SRR1823638_sub_2_val_2.fq.gz
+
+
+
+#------------------------------------------------------------------------------
+# MULTIQC                                                                     #
+#------------------------------------------------------------------------------
+
+multiqc -f -i "Placental Biology Course 2018" --filename "PlacentalBiologyCourse.multiqc_report.html" .
+
+
+firefox PlacentalBiologyCourse.multiqc_report.html
+
+
+

@@ -1,0 +1,395 @@
+---
+title: " Placental Biology Course 2018 (Centre for Trophoblast Research, University of Cambridge)"
+author: "Russell Hamilton, Xiaohui Zhao & Malwina Prater"
+date: "05/07/2018"
+output: html_document
+runtime: shiny
+---
+
+#### Authors  :   Dr Russell S. Hamilton, Dr Xiaohui Zhao, Dr Malwina Prater
+
+#### Emails   :	 rsh46@cam.ac.uk, xz289@cam.ac.uk & mn367@cam.ac.uk 
+
+#### Twitter  :	 @drrshamilton
+
+#### Web      :	 http://www.trophoblast.cam.ac.uk/directory/Russell-Hamilton
+
+#### Placental Biology Course 2018 (Centre for Trophoblast Research, University of Cambridge)
+
+ R-Script to perform differential transcript analysis of Placenta vs Yolk WT samples
+ 
+ Data derived from:  `10.1242/dev.130369`  Stumpo DJ et al (2016) Deficiency of the placenta- and yolk sac-specific tristetraprolin family 
+ member ZFP36L3 identifies likely mRNA targets and an unexpected link to placental iron 
+ metabolism. Development, 143(8):1424-33
+ 
+
+
+Copyright Russell S. Hamilton (rsh46@cam.ac.uk), Xiaohui Zhao (xz289@cam.ac.uk) and Malwina Prater (mn367@cam.ac.uk) July 2016-18  
+ 
+License: 	   Attribution-Non Commercial-Share Alike CC BY-NC-SA  
+             https://creativecommons.org/licenses/by-nc-sa/    
+ 
+Attribution:	 You must give appropriate credit, provide a link to the license, and indicate   
+                  if changes were made. You may do so in any reasonable manner, but not in any   
+                  way that suggests the licensor endorses you or your use. 
+                  
+NonCommercial: You may not use the material for commercial purposes.    
+   
+ShareAlike:	   If you remix, transform, or build upon the material, you must distribute your 
+                  contributions under the same license as the original.                  
+
+
+
+
+```{r, echo=TRUE}
+# Make compilation stop upon error:
+library(knitr)
+knitr::opts_chunk$set(error=FALSE, warning = FALSE, background = '#d6d6ff')
+```
+ 
+
+Install the required external libraries / packages if needed
+#source("http://bioconductor.org/biocLite.R")
+#biocLite("rhdf5")
+#install.packages("devtools")
+#install.packages("dplyr")
+#devtools::install_github("pachterlab/sleuth")
+
+
+Load in the required external libraries / packages
+```{r, message=FALSE}
+library("dplyr")
+library("sleuth")
+```
+
+Set up the working directories, they should point to the location of the data
+```{r}
+base_dir <- "/home/participant/Course_Materials/PlacentalBioCourse"
+setwd(base_dir)
+list.files(base_dir)
+```
+
+Read in the locations of the kallisto_output directories. Print out to screen the directories, you should see a list of 11 directories
+```{r}
+dirs <- grep("SRR.*/SRR.*_kallisto_output",list.dirs(base_dir,recursive=TRUE),value=TRUE)
+print(dirs)
+```
+
+Parse out the short sample names for nicer displays in plots later on in the analysis
+```{r}
+sample_id <- gsub("_1_val_1.fq.gz_kallisto_output", "", dirs)
+sample_id <- gsub(".*/", "", sample_id)
+# print to screen the new short names, they should look like "SRR1811706" ...
+show(sample_id)
+```
+
+
+
+
+Make sample table:
+```{r}
+sample <-    c("SRR1811706", "SRR1811707", "SRR1811708", "SRR1811709", "SRR1823638", "SRR1823639", "SRR1823640", "SRR1823641", "SRR1823642", "SRR1823643", "SRR1823644")
+condition <- c("YolkSac",    "YolkSac",    "YolkSac",    "YolkSac",    "Placenta",   "Placenta",   "Placenta",   "Placenta",   "Placenta",   "Placenta",   "Placenta")
+s2c <- data.frame(sample, condition)
+s2c <- dplyr::select(s2c, sample = sample, condition = condition)
+s2c <- dplyr::mutate(s2c, path = dirs)
+s2c[] <- lapply(s2c, as.character)
+# Lets have a look at the sample table linkes the sample, condition directories / filenames
+print(s2c)
+```
+
+
+
+Now you need to read in the annotations for transcripts. Usually it is best to pull the data directly from the ensEMBL website using biomart. However, for this practical we have premade the annotation file "ENST_ENSG_GeneName.GRCm38.kallisto.table". This can still take a little while to load in...
+```{r}
+t2g <- read.table(file.path(base_dir, "ENST_ENSG_GeneName.GRCm38.kallisto.table"), header = TRUE, stringsAsFactors=FALSE)
+t2g_sleuth <- dplyr::rename(t2g, target_id = ensembl_transcript_id, ens_gene = ensembl_gene_id, ext_gene = external_gene_name)
+t2g_sleuth$ens_gene  <- gsub("\\.[0-9]*", "", t2g_sleuth$ens_gene)
+head(t2g_sleuth)
+
+t2g_deseq2 <- dplyr::rename(t2g, target_id = ensembl_transcript_id, ens_gene = ensembl_gene_id, ext_gene = external_gene_name)
+t2g_deseq2$ens_gene  <- gsub("\\.[0-9]*", "", t2g_deseq2$ens_gene)
+
+head(t2g_deseq2)
+```
+
+
+
+
+
+Differential gene analysis using Sleuth 
+
+- method utilizes bootstrapping in conjunction with response error linear modeling to decouple biological variance from inferential variance; particularly suited when pseudoaligning (e.g. Kallisto).
+See: Pimentel et al. 2017. Differential analysis of RNA-seq incorporating quantification uncertainty. Nature Methods 14, 687–690; doi:10.1038/nmeth.4324
+
+
+Read the data into Sleuth - we are creating a sleuth object (so)
+
+
+NOTE: This will take up to 5 mins to complete!!!
+
+
+The analysis can also be performed at the gene level rather than by transcript however this feature is experime
+```{r, message=TRUE, warning=FALSE}
+so <- sleuth_prep(s2c, ~condition, target_mapping = t2g_sleuth, aggregation_column = 'ens_gene')
+
+```
+
+
+This is the main part of the differential transcript analysis
+Performs shrinkage estimation and the computing of variance of betas
+```{r, message=FALSE}
+so <- sleuth_fit(so)
+so <- sleuth_wt(so, which_beta= 'conditionYolkSac')
+```
+
+
+In general, we can test models that are nested using the likelihood ratio test. Viewing models which have been fit can be done using the models() function.
+```{r}
+models(so)
+```
+
+Lets view and check the experiment design matrix, good to make sure we are testing the right conditions
+```{r}
+design_matrix(so)
+```
+
+
+#Now you can generate a table of results for analysis
+```{r}
+results_sleuth  <- sleuth_results(so, 'conditionYolkSac')
+head(results_sleuth)
+write.csv(results_sleuth, file=paste("Sleuth", "_kallisto_results_table.csv", sep =""))
+```
+
+You can save the sleuth object to a local file, then read it into the sleuth_live app directly to save time if you are returning to analyse the data
+To Save:
+
+#```{r}
+#saveRDS(so, file = 'so.rds')  
+#```
+
+#To Read in a saved so
+#```{r}
+#so <- readRDS('so.rds')
+#```
+
+Launch the shiny app to have a graphical tool for exploring the data
+```{r}
+sleuth_live(so, options = list(height = 1200))
+```
+
+
+
+
+
+
+DESeq2
+An alternative package for differential gene analysis is DESeq2.
+- method uses shrinkage estimation for dispersions and fold changes to improve stability and interpretabili0ty of estimates
+
+See: Love et al 2014. Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2, Genome Biology 201415:550. DOI: 10.1186/s13059-014-0550-8
+
+
+Load the library
+```{r, message=FALSE}
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(cowplot)
+```
+
+
+Create a list of count files
+```{r}
+files <- file.path(dirs, "abundance.tsv")
+names(files) <- sample_id
+all(file.exists(files))
+```
+
+Import the files and examine raw counts
+```{r, message=FALSE}
+library(tximport)
+library(readr)
+
+txi <- tximport(files, type = "kallisto", tx2gene = t2g_deseq2[,c(1,2)])
+names(txi)
+head(txi$counts)
+```
+
+
+Differential expression analysis steps are wrapped into a single function, `DESeq()`. 
+```{r, message=TRUE, warning=FALSE}
+dds <- DESeqDataSetFromTximport(txi, s2c, ~condition)
+dds <- DESeq(dds)
+head(dds)
+```
+
+Results tables are generated using the function `results()`.
+```{r}
+res <- results(dds)
+res <-res[order(res$padj),]
+head(res)
+summary(res)
+write.csv(res, file=paste("DESeq2", "_kallisto_results_table.csv", sep =""))
+```
+
+How many adjusted p-values were less than 0.05?
+```{r}
+sum(res$padj < 0.05, na.rm=TRUE)
+```
+
+Now annotate DESeq2 results table `res` and lets call it `results_deseq2`
+```{r}
+anno_df <- t2g_deseq2[-1]
+anno_df <- anno_df[!duplicated(anno_df), ] 
+head(anno_df)
+results_deseq2 <- as.data.frame(res)
+results_deseq2$ens_gene <- rownames(results_deseq2)
+results_deseq2 <- merge(results_deseq2, anno_df, by = "ens_gene" )
+results_deseq2 <-results_deseq2[order(results_deseq2$padj),]
+head(results_deseq2)
+```
+
+
+Explore data using default DeSeq2 Functions
+```{r}
+#plotMA(res, ylim=c(-3,3))
+#significance <- 0.05
+#Title <- "MA plot"
+#MAplt <- ggplot(data = results_deseq2, aes(x=baseMean, y=log2FoldChange)) + 
+#  geom_point(size=1, alpha=0.25, col="black") +
+#  geom_point(data=subset(results_deseq2, (padj <= significance & log2FoldChange >= 2)),      size=1.25, alpha=0.5,  col="red") +
+#  geom_point(data=subset(results_deseq2, ((padj <= significance) & (log2FoldChange <= -2))),     size=1, alpha=0.5,  col="blue") +
+#  xlab("Normalised Read Count") + ylab("log2 Fold Change") + ggtitle(paste("MA plot")) +
+##  scale_x_log10() +
+#  geom_abline(intercept = significance, slope = 0, colour='green', alpha=0.25) + 
+#  geom_abline(intercept = -significance, slope = 0, colour='green', alpha=0.25) +
+#  scale_y_continuous(limits=c(-4,4), breaks=seq(-3,3,1), expand = c(0, 0))
+#MAplt
+
+DESeq2::plotMA(res) #, ylim=c(-3,3))
+```
+
+
+
+Explore data using custom functions
+```{r, warning=FALSE}
+
+l2fc <- 2
+significance <- 0.01
+Title <- "MA plot"
+
+
+results_deseq2.ma <- results_deseq2
+
+results_deseq2.ma$log2FoldChange[results_deseq2.ma$log2FoldChange > 10]  <- 10
+results_deseq2.ma$log2FoldChange[results_deseq2.ma$log2FoldChange < -10] <- -10
+
+results_deseq2.label      <- subset(results_deseq2.ma, abs(log2FoldChange) >= l2fc & (padj < significance | padj == 0))
+results_deseq2.label.up   <- subset(results_deseq2.label, log2FoldChange > 0 )
+results_deseq2.label.up   <- results_deseq2.label.up[order(results_deseq2.label.up$padj, decreasing=FALSE),]
+
+results_deseq2.label.down   <- subset(results_deseq2.label, log2FoldChange < 0 )
+results_deseq2.label.down   <- results_deseq2.label.down[order(results_deseq2.label.down$padj, decreasing=FALSE),]
+
+ggplot(data = results_deseq2.ma, aes(x=baseMean, y=log2FoldChange)) + 
+  geom_point(size=1, alpha=0.25, col="black") +
+  geom_point(data=subset(results_deseq2.ma, (padj <= significance & log2FoldChange >= l2fc)),      size=1, alpha=0.5,  col="red") +
+  geom_point(data=subset(results_deseq2.ma, ((padj <= significance) & (log2FoldChange <= -l2fc))),     size=1, alpha=0.5,  col="blue") +
+  
+  geom_label_repel(data=results_deseq2.label.up[1:10,],
+                   aes( x=baseMean, y=log2FoldChange, label=external_gene_shortname),
+                   fill='gray', colour='black', point.padding = unit(0.25, "lines"),  size=3, segment.size = 1, segment.color = 'darkred',  nudge_x = 0, nudge_y=0) +
+  geom_label_repel(data=results_deseq2.label.down[1:10,],
+                   aes( x=baseMean, y=log2FoldChange, label=external_gene_shortname),
+                   fill='gray', colour='black', point.padding = unit(0.25, "lines"),  size=3, segment.size = 1, segment.color = 'darkblue',  nudge_x = 0, nudge_y=0) +
+  scale_x_log10() +
+  xlab("Normalised Read Count") + ylab("log2 Fold Change") + ggtitle(paste("MA plot")) +
+  geom_abline(intercept = l2fc, slope = 0, colour='green', alpha=0.25) + 
+  geom_abline(intercept = -l2fc, slope = 0, colour='green', alpha=0.25)
+
+
+```
+
+
+Lets pick a gene to examine individually - Flt1 (ENSMUSG00000029648)
+```{r}
+plotCounts(dds, gene="ENSMUSG00000029648", intgroup="condition")
+```
+
+rlog transformation
+This function transforms the count data to the log2 scale in a way which minimizes differences between samples for rows with small counts, and which normalizes with respect to library size.
+Note: This an take upto a minute to run!!!
+```{r}
+rld <- rlogTransformation(dds)
+```
+
+Plot PCA
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(matrixStats)
+elementTextSize <- 8
+topNum = 500
+
+pca = prcomp(t(assay(rld)))
+rv = rowVars(assay(rld))
+select = order(rv, decreasing = TRUE)[seq_len(min(topNum, length(rv)))]
+pca = prcomp(t(assay(rld)[select, ]))
+
+pc1var <- round(summary(pca)$importance[2,1]*100, digits=1)
+pc2var <- round(summary(pca)$importance[2,2]*100, digits=1)
+pc1lab <- paste0("PC1 (",as.character(pc1var),"%)")
+pc2lab <- paste0("PC2 (",as.character(pc2var),"%)")
+
+scores <- data.frame(sample_id, pca$x, s2c)
+
+ggplot(scores, aes(x = PC1, y = PC2, col = (factor(condition)) )) +
+  geom_point(size = 5 ) + geom_text_repel(aes(label=sample_id), col = "black") +
+    xlab(pc1lab) + ylab(pc2lab) + ggtitle(paste(" PCA Top ", topNum, " MV", sep="")) +
+    theme(text = element_text(size=elementTextSize)) 
+```
+
+
+Now, lets compare Sleuth and DESeq2 results! First we need to select genes that are differentially expressed. As out cut-off, we will use adjusted p value (padj) or q-value < 0.01. 
+
+```{r}
+results_sleuth <- read.table(file = paste(base_dir, "/Sleuth_kallisto_results_table.csv", sep = ""), sep = ",", header = T)
+resSig_DESeq2 <- subset(results_deseq2, results_deseq2$padj < 0.01)
+resSig_Sleuth <- subset(results_sleuth, results_sleuth$qval < 0.01)
+resSig_DESeq2$DESeq2 <- "deseq2"
+resSig_Sleuth$Sleuth <- "sleuth"
+
+head(resSig_DESeq2, 20)
+head(resSig_Sleuth, 20)
+
+nrow(resSig_DESeq2)
+nrow(resSig_Sleuth)
+
+```
+
+Now, merge both results tables and see overlap of differentailly expressed genes on Venn diagram
+```{r, message=FALSE}
+
+
+resSig_DESeq2 <- resSig_DESeq2[,c("ens_gene", "DESeq2")]
+resSig_Sleuth <- resSig_Sleuth[,c("target_id", "Sleuth")]
+colnames(resSig_Sleuth)[1] <- "ens_gene"
+
+table <- merge(resSig_DESeq2, resSig_Sleuth, by = "ens_gene", all = T)
+
+library(VennDiagram)
+library("limma")
+
+foo<- function(x) { sum(!is.na(x)) }
+table$DESeq2 <- sapply(table$DESeq2, foo, simplify=T)  # 1=yes, 0=NA
+table$Sleuth <- sapply(table$Sleuth, foo, simplify=T)  
+
+venn_table <- table[,c("DESeq2","Sleuth")]
+
+venn_counts <- vennCounts(venn_table)
+vennDiagram(venn_counts, circle.col=c("green", "blue"))
+```
+
+
